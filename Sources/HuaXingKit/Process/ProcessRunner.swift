@@ -1,4 +1,10 @@
 import Foundation
+import Subprocess
+#if canImport(System)
+import System
+#else
+import SystemPackage
+#endif
 
 // MARK: - ProcessSpec
 
@@ -39,95 +45,81 @@ public struct OutputLine: Sendable {
     public var text: String
 }
 
-// MARK: - Internal helpers (visible to ProcessHandle)
+// MARK: - Private helpers
 
-/// SIGTERM at deadline, SIGKILL after 5s grace if still alive.
-final class Watchdog: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "huaxing.process.watchdog")
-    private let timeout: TimeInterval
-    private var armed = true
-    private let lock = NSLock()
-    private var timedOut = false
+/// Internal signal that the timeout elapsed. Not surfaced to callers; the
+/// handle's `didTimeOut` flag communicates the outcome instead.
+private enum ProcessRunnerError: Error { case timedOut }
 
-    init(timeout: TimeInterval) { self.timeout = timeout }
-
-    func start(for process: Process) {
-        guard timeout.isFinite, timeout > 0 else { return }
-        queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
-            guard let self, self.armed else { return }
-            if process.isRunning {
-                self.lock.lock(); self.timedOut = true; self.lock.unlock()
-                process.terminate()
-                let pid = process.processIdentifier
-                self.queue.asyncAfter(deadline: .now() + 5) { [weak self] in
-                    guard let self, self.armed, kill(pid, 0) == 0 else { return }
-                    kill(pid, SIGKILL)
-                }
-            }
+extension TerminationStatus {
+    /// The raw exit/signal code, normalized to `Int32`.
+    var exitCode: Int32 {
+        switch self {
+        case .exited(let code): code
+        case .signaled(let code): code
         }
-    }
-
-    func cancel() {
-        queue.async { self.armed = false }
-    }
-
-    var didTimeOut: Bool {
-        lock.lock(); let v = timedOut; lock.unlock(); return v
     }
 }
 
+// MARK: - ProcessHandle
+
 /// Handle returned by `ProcessRunner.lines`; call `cancel()` to terminate the
-/// subprocess with SIGTERM → 5s grace → SIGKILL escalation.
+/// subprocess. `waitUntilExit()` blocks until the subprocess exits and returns
+/// its exit code, matching the `Foundation.Process`-based contract it replaces.
 public final class ProcessHandle: @unchecked Sendable {
-    private let process: Process
-    private let watchdog: Watchdog?
-    private let cancelLock = NSLock()
+    private let lock = NSLock()
     private var didCancel = false
-    private var launched = false
+    private var timedOut = false
+    private var exitCode: Int32?
+    private var task: Task<Void, Never>?
+    private let exitGroup = DispatchGroup()
 
-    init(process: Process, watchdog: Watchdog?) {
-        self.process = process
-        self.watchdog = watchdog
+    init() {
+        exitGroup.enter()
     }
 
-    /// Set by ProcessRunner immediately after `Process.run()` succeeds.
-    func markLaunched() {
-        cancelLock.lock(); launched = true; cancelLock.unlock()
+    /// Wire up the underlying task so `cancel()` can tear it down.
+    fileprivate func attach(_ task: Task<Void, Never>) {
+        lock.lock(); self.task = task; lock.unlock()
     }
 
-    public var isLaunched: Bool {
-        cancelLock.lock(); defer { cancelLock.unlock() }; return launched
+    /// Record the subprocess exit code and unblock any `waitUntilExit()` waiter.
+    fileprivate func recordExit(_ code: Int32) {
+        lock.lock(); if exitCode == nil { exitCode = code }; lock.unlock()
+        exitGroup.leave()
     }
+
+    /// Mark the run as timed out (used by the watchdog race).
+    fileprivate func markTimedOut() {
+        lock.lock(); timedOut = true; lock.unlock()
+    }
+
+    public var isLaunched: Bool { true }
 
     public var isCancelled: Bool {
-        cancelLock.lock(); defer { cancelLock.unlock() }; return didCancel
+        lock.lock(); defer { lock.unlock() }; return didCancel
     }
 
-    public var didTimeOut: Bool { watchdog?.didTimeOut ?? false }
+    public var didTimeOut: Bool {
+        lock.lock(); defer { lock.unlock() }; return timedOut
+    }
 
     /// Blocks until the subprocess exits and returns its termination status.
-    /// Returns -1 when the process was never launched.
+    /// Returns -1 when the process was never launched or the spawn failed.
     @discardableResult
     public func waitUntilExit() -> Int32 {
-        guard isLaunched else { return -1 }
-        process.waitUntilExit()
-        return process.terminationStatus
+        exitGroup.wait()
+        lock.lock(); let code = exitCode ?? -1; lock.unlock()
+        return code
     }
 
     public func cancel() {
-        cancelLock.lock()
-        guard !didCancel else { cancelLock.unlock(); return }
+        lock.lock()
+        guard !didCancel else { lock.unlock(); return }
         didCancel = true
-        cancelLock.unlock()
-
-        watchdog?.cancel()
-        if process.isRunning {
-            process.terminate()
-            let pid = process.processIdentifier
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
-                if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-            }
-        }
+        let t = task
+        lock.unlock()
+        t?.cancel()
     }
 }
 
@@ -136,251 +128,121 @@ public final class ProcessHandle: @unchecked Sendable {
 public enum ProcessRunner {
     public static let enhancedPATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-    static func environment(extra: [String: String]?) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = enhancedPATH
+    /// Build a Subprocess `Environment` from the spec: inherit the parent
+    /// environment, override PATH with the enhanced search path, then merge any
+    /// caller-provided extras (PATH excluded — it's already fully overridden).
+    static func environment(extra: [String: String]?) -> Environment {
+        var overrides: [Environment.Key: String?] = ["PATH": enhancedPATH]
         if let extra {
-            for (k, v) in extra where k != "PATH" { env[k] = v }
+            for (k, v) in extra where k != "PATH" {
+                overrides[Environment.Key(stringLiteral: k)] = v
+            }
         }
-        return env
+        return .inherit.updating(overrides)
     }
 
     /// Full-buffered run — returns exit code + both stream strings.
+    ///
+    /// Implemented on top of Subprocess 1.0: `run(...)` collects stdout/stderr
+    /// and returns a non-zero exit code as a normal result (not a thrown error).
     public static func run(_ spec: ProcessSpec) async -> ProcessResult {
-        await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .utility).async {
-                cont.resume(returning: runBlocking(spec))
-            }
-        }
-    }
-
-    /// Line-streaming variant — yields each newline-terminated (or partial) chunk
-    /// as an `OutputLine` on the returned `AsyncStream`. Cancelling the stream
-    /// terminates the subprocess.
-    public static func lines(_ spec: ProcessSpec) -> (AsyncStream<OutputLine>, ProcessHandle) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: spec.executable)
-        process.arguments = spec.arguments
-        process.environment = environment(extra: spec.environment)
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let watchdog = Watchdog(timeout: spec.timeout)
-        let handle = ProcessHandle(process: process, watchdog: watchdog)
-
-        // Shared bridge — NSLock-protected, holds both line buffers and the
-        // continuation. readabilityHandlers dispatch on arbitrary queues; the
-        // lock keeps Sendable closure-capture rules happy.
-        let bridge = LineStreamBridge()
-
-        let stream = AsyncStream<OutputLine> { continuation in
-            bridge.setContinuation(continuation)
-        }
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [bridge] fh in
-            let data = fh.availableData
-            if data.isEmpty { fh.readabilityHandler = nil; bridge.close(stdout: true); return }
-            bridge.feed(.stdout, data: data)
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { [bridge] fh in
-            let data = fh.availableData
-            if data.isEmpty { fh.readabilityHandler = nil; bridge.close(stdout: false); return }
-            bridge.feed(.stderr, data: data)
-        }
-
-        bridge.onTerminate = { [weak handle] in handle?.cancel() }
-
         do {
-            try process.run()
-            handle.markLaunched()
-            watchdog.start(for: process)
+            let result = try await Subprocess.run(
+                .path(FilePath(spec.executable)),
+                arguments: Arguments(spec.arguments),
+                environment: environment(extra: spec.environment),
+                output: .string(limit: Int.max),
+                error: .string(limit: Int.max)
+            )
+            return ProcessResult(
+                exitCode: result.terminationStatus.exitCode,
+                stdout: result.standardOutput,
+                stderr: result.standardError,
+                timedOut: false,
+                launched: true
+            )
         } catch {
-            bridge.yieldError("Failed to execute: \(error.localizedDescription)")
-            bridge.finish()
-        }
-
-        return (stream, handle)
-    }
-
-    // MARK: - Blocking implementation
-
-    private static func runBlocking(_ spec: ProcessSpec) -> ProcessResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: spec.executable)
-        process.arguments = spec.arguments
-        process.environment = environment(extra: spec.environment)
-
-        let stdoutBox = OutputBox()
-        let stderrBox = OutputBox()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let eofGroup = DispatchGroup()
-        eofGroup.enter(); eofGroup.enter()
-        installReader(on: stdoutPipe.fileHandleForReading, into: stdoutBox, group: eofGroup)
-        installReader(on: stderrPipe.fileHandleForReading, into: stderrBox, group: eofGroup)
-
-        do { try process.run() } catch {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
             return ProcessResult(
                 exitCode: -1, stdout: "",
                 stderr: "Failed to execute: \(error.localizedDescription)",
                 timedOut: false, launched: false
             )
         }
-
-        let watchdog = Watchdog(timeout: spec.timeout)
-        watchdog.start(for: process)
-        process.waitUntilExit()
-        watchdog.cancel()
-
-        _ = eofGroup.wait(timeout: .now() + 2)
-
-        return ProcessResult(
-            exitCode: process.terminationStatus,
-            stdout: stdoutBox.string,
-            stderr: stderrBox.string,
-            timedOut: watchdog.didTimeOut,
-            launched: true
-        )
     }
 
-    private static func installReader(
-        on handle: FileHandle, into box: OutputBox, group: DispatchGroup
-    ) {
-        handle.readabilityHandler = { fh in
-            let data = fh.availableData
-            if data.isEmpty { fh.readabilityHandler = nil; group.leave() }
-            else { box.append(data) }
-        }
-    }
-}
+    /// Line-streaming variant — yields each line as an `OutputLine` on the
+    /// returned `AsyncStream`. Cancelling the returned `ProcessHandle`
+    /// terminates the subprocess, and the stream ends once the process exits.
+    ///
+    /// Implemented on top of Subprocess 1.0: the body closure receives the
+    /// running subprocess's stdout/stderr as `AsyncSequence`s; cancelling the
+    /// enclosing task makes Subprocess tear down the child automatically.
+    public static func lines(_ spec: ProcessSpec) -> (AsyncStream<OutputLine>, ProcessHandle) {
+        let (stream, continuation) = AsyncStream.makeStream(of: OutputLine.self)
+        let handle = ProcessHandle()
 
-// MARK: - File-local helpers
-
-/// NSLock-protected Data accumulator for blocking reads.
-private final class OutputBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-    func append(_ chunk: Data) {
-        lock.lock(); data.append(chunk); lock.unlock()
-    }
-    var string: String {
-        lock.lock(); let copy = data; lock.unlock()
-        return String(decoding: copy, as: UTF8.self)
-    }
-}
-
-/// NSLock-protected bridge between readabilityHandlers and AsyncStream continuation.
-/// All methods are thread-safe; readabilityHandlers fire on an arbitrary private queue.
-private final class LineStreamBridge: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: AsyncStream<OutputLine>.Continuation?
-    private var stdoutBuf = Data()
-    private var stderrBuf = Data()
-    private var closedCount = 0
-    var onTerminate: (@Sendable () -> Void)?
-
-    func setContinuation(_ c: AsyncStream<OutputLine>.Continuation) {
-        lock.lock()
-        self.continuation = c
-        // Only cancel the subprocess when the *consumer* stops early. A normal
-        // EOF-driven `finish()` also terminates the stream, and treating that
-        // as cancellation would make every successful run look cancelled.
-        c.onTermination = { [weak self] reason in
-            if case .cancelled = reason {
-                self?.onTerminate?()
+        let task = Task { @Sendable in
+            var code: Int32 = -1
+            do {
+                code = try await withThrowingTaskGroup(of: Int32.self) { group in
+                    group.addTask {
+                        let result = try await Subprocess.run(
+                            .path(FilePath(spec.executable)),
+                            arguments: Arguments(spec.arguments),
+                            environment: Self.environment(extra: spec.environment),
+                            input: .none,
+                            output: .sequence,
+                            error: .sequence
+                        ) { execution in
+                            async let out = collect(execution.standardOutput, stream: .stdout, into: continuation)
+                            async let err = collect(execution.standardError, stream: .stderr, into: continuation)
+                            _ = await (out, err)
+                        }
+                        return result.terminationStatus.exitCode
+                    }
+                    if spec.timeout.isFinite, spec.timeout > 0 {
+                        group.addTask {
+                            try await Task.sleep(nanoseconds: UInt64(spec.timeout * 1_000_000_000))
+                            handle.markTimedOut()
+                            throw ProcessRunnerError.timedOut
+                        }
+                    }
+                    let first = try await group.next()
+                    group.cancelAll()
+                    return first ?? -1
+                }
+            } catch {
+                if !(error is CancellationError), !handle.didTimeOut {
+                    continuation.yield(.init(stream: .stderr, text: "Failed to execute: \(error.localizedDescription)"))
+                }
             }
+            // Cleanup runs on the normal and cancelled paths alike: when
+            // `handle.cancel()` cancels the enclosing task, `Subprocess.run`
+            // throws `CancellationError`, we land in `catch`, and the tail below
+            // still records the exit code and terminates the stream. The
+            // synchronous tail needs no `withTaskCancellationShield` (which
+            // requires the macOS 27 deployment target this project doesn't set).
+            handle.recordExit(code)
+            continuation.finish()
         }
-        lock.unlock()
+
+        handle.attach(task)
+        return (stream, handle)
     }
 
-    func feed(_ stream: OutputLine.Stream, data: Data) {
-        lock.lock()
-        var lines: [String] = []
-        switch stream {
-        case .stdout:
-            stdoutBuf.append(data)
-            lines = extractLines(&stdoutBuf)
-        case .stderr:
-            stderrBuf.append(data)
-            lines = extractLines(&stderrBuf)
+    /// Drains one output stream line-by-line into the shared continuation.
+    private static func collect(
+        _ sequence: SubprocessOutputSequence,
+        stream: OutputLine.Stream,
+        into continuation: AsyncStream<OutputLine>.Continuation
+    ) async {
+        do {
+            for try await line in sequence.strings() {
+                continuation.yield(.init(stream: stream, text: line))
+            }
+        } catch {
+            // Stream closed or errored; ignore — the other stream / termination
+            // drives completion.
         }
-        lock.unlock()
-        for line in lines {
-            continuation?.yield(.init(stream: stream, text: line))
-        }
-    }
-
-    private func extractLines(_ buf: inout Data) -> [String] {
-        var lines: [String] = []
-        while let idx = buf.firstIndex(of: 0x0A) {
-            var lineData = buf.prefix(upTo: idx)
-            if lineData.last == 0x0D { lineData.removeLast() }
-            lines.append(String(decoding: lineData, as: UTF8.self))
-            buf.removeSubrange(0...idx)
-        }
-        return lines
-    }
-
-    func close(stdout: Bool) {
-        lock.lock()
-        closedCount += 1
-        let shouldFinish = closedCount >= 2
-        // `stdout == true` means the stdout pipe reached EOF, so flush stdout.
-        let restOut = stdout ? flushBuf(&stdoutBuf) : nil
-        let restErr = stdout ? nil : flushBuf(&stderrBuf)
-        lock.unlock()
-        if let s = restOut { continuation?.yield(.init(stream: .stdout, text: s)) }
-        if let s = restErr { continuation?.yield(.init(stream: .stderr, text: s)) }
-        if shouldFinish { continuation?.finish() }
-    }
-
-    func finish() {
-        lock.lock()
-        continuation?.finish()
-        lock.unlock()
-    }
-
-    func yieldError(_ msg: String) {
-        lock.lock()
-        continuation?.yield(.init(stream: .stderr, text: msg))
-        lock.unlock()
-    }
-
-    private func flushBuf(_ buf: inout Data) -> String? {
-        guard !buf.isEmpty else { return nil }
-        let s = String(decoding: buf, as: UTF8.self)
-        buf.removeAll()
-        return s
-    }
-}
-
-/// Splits raw stream bytes into newline-terminated lines, buffering the tail.
-private final class LineBuffer {
-    private var buffer = Data()
-    func append(_ chunk: Data) -> [String] {
-        buffer.append(chunk)
-        var lines: [String] = []
-        while let idx = buffer.firstIndex(of: 0x0A) {
-            let lineData = buffer.prefix(upTo: idx)
-            var trimmed = lineData
-            if trimmed.last == 0x0D { trimmed.removeLast() }
-            lines.append(String(decoding: trimmed, as: UTF8.self))
-            buffer.removeSubrange(0...idx)
-        }
-        return lines
-    }
-    func flush() -> String? {
-        guard !buffer.isEmpty else { return nil }
-        let s = String(decoding: buffer, as: UTF8.self)
-        buffer.removeAll()
-        return s
     }
 }
