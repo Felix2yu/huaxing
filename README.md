@@ -6,7 +6,7 @@ macOS 多媒体转换工具包：用**预设**把视频 / 音频 / 图片转成�
 - **huaxingctl** —— 命令行前端
 - **HuaXing（化形）** —— SwiftUI 图形界面（macOS App）
 
-> 目标平台：macOS 26（Tahoe），Swift 6.2。视频/音频转换需要 `ffmpeg` + `ffprobe`；图片转换可走系统 ImageIO / `sips`，仅在使用 JPEG XL / WebP 等格式时才依赖可选工具。
+> 目标平台：macOS 26（Tahoe），Swift 6.4。视频/音频转换需要 `ffmpeg` + `ffprobe`；图片转换可走系统 ImageIO / `sips`，仅在使用 JPEG XL / WebP 等格式时才依赖可选工具。
 
 ---
 
@@ -28,7 +28,7 @@ macOS 多媒体转换工具包：用**预设**把视频 / 音频 / 图片转成�
 | 组件 | 是否必须 | 说明 |
 |------|----------|------|
 | macOS 26 | 必须 | 目标部署版本（`.v26`） |
-| Swift 6.2 工具链 | 必须 | Xcode 或 Command Line Tools |
+| Swift 6.4 工具链 | 必须 | Xcode 或 Command Line Tools |
 | `ffmpeg` + `ffprobe` | 必须（视频/音频） | 图片转换不依赖 ffmpeg |
 | `djxl` / `cwebp` / `dwebp` / `jxlinfo` / `sips` | 可选 | 用于 JPEG XL / WebP 等格式与元数据保留（`sips` 为 macOS 自带） |
 
