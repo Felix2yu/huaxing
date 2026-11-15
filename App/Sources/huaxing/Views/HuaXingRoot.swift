@@ -103,21 +103,35 @@ struct SettingsView: View {
 /// 全局顶部状态条 —— 所有 diagnostic 绿色则全绿。
 struct ToolchainIndicator: View {
     @EnvironmentObject var appModel: AppModel
+    @EnvironmentObject var uiState: UIRuntimeState
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
+            // 固定 12×12 容器：探测中与常态两种图标占位一致，状态条不跳动。
+            Group {
+                if appModel.isRefreshingToolchain {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .frame(width: 12, height: 12)
             Text(statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            // 「诊断…」按 macOS 惯例应打开诊断界面，而不只是静默重跑探测；
+            // 同时切页能让「重新探测」的结果与进度立刻可见。
             Button("诊断…") {
+                uiState.selectedTab = .diagnose
                 Task { await appModel.refreshToolchain() }
             }
             .buttonStyle(.plain)
             .font(.caption)
+            .disabled(appModel.isRefreshingToolchain)
+            .help("打开诊断页并重新检测工具链")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -134,6 +148,7 @@ struct ToolchainIndicator: View {
         return .green
     }
     private var statusText: String {
+        if appModel.isRefreshingToolchain { return "正在检测工具链…" }
         if appModel.diagnostics.isEmpty { return "加载诊断中…" }
         if health.errors > 0 { return "工具链异常（\(health.errors) 项错误）" }
         if health.warnings > 0 { return "有 \(health.warnings) 项可选工具警告" }

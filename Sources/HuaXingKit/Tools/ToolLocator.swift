@@ -105,28 +105,47 @@ public enum ToolFailure: Sendable, Equatable, Error, CustomStringConvertible {
 
 /// Searchs for a tool on disk without executing it.
 public enum ToolLocator {
-    /// Search order: explicit user override → Homebrew Intel → Homebrew Apple Silicon →
-    /// system PATH. The override is a complete executable path, not a directory.
-    public static func resolve(_ tool: Tool, userOverride: String? = nil) -> String? {
-        let name = tool.rawValue
+    /// Standard install directories, checked **before** the process PATH.
+    ///
+    /// A GUI app launched by LaunchServices inherits a minimal PATH
+    /// (`/usr/bin:/bin:/usr/sbin:/sbin`) that omits Homebrew entirely, so a
+    /// PATH-only lookup would report brew-installed ffmpeg/ffprobe as missing.
+    /// These entries are directories — `appendingPathComponent` adds the tool
+    /// name. (Previously they were full file paths and got the name appended a
+    /// second time, e.g. `/opt/homebrew/bin/ffmpeg/ffmpeg`, which made every
+    /// hardcoded fallback dead code.)
+    private static let standardDirectories = [
+        "/opt/homebrew/bin",   // Apple Silicon Homebrew
+        "/usr/local/bin",      // Intel Homebrew / manual installs
+        "/usr/bin",            // system tools, e.g. sips
+    ]
 
+    /// Search order: explicit user override → standard install directories →
+    /// process PATH. The override is a complete executable path, not a directory.
+    public static func resolve(_ tool: Tool, userOverride: String? = nil) -> String? {
+        resolve(
+            tool,
+            userOverride: userOverride,
+            pathEnvironment: ProcessInfo.processInfo.environment["PATH"] ?? ""
+        )
+    }
+
+    /// Test seam — simulates a different PATH (e.g. the minimal GUI one) without
+    /// mutating the process environment.
+    static func resolve(
+        _ tool: Tool,
+        userOverride: String? = nil,
+        pathEnvironment: String
+    ) -> String? {
         if let userOverride {
             let p = (userOverride as NSString).expandingTildeInPath
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
 
-        let candidates: [String] = [
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
-            "/usr/bin/\(name)",
-        ]
+        let pathDirs = pathEnvironment.split(separator: ":").map(String.init)
 
-        // Also scan PATH env
-        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .split(separator: ":").map(String.init)
-
-        for dir in candidates + pathDirs {
-            let p = (dir as NSString).appendingPathComponent(name)
+        for dir in standardDirectories + pathDirs where !dir.isEmpty {
+            let p = (dir as NSString).appendingPathComponent(tool.rawValue)
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
         return nil

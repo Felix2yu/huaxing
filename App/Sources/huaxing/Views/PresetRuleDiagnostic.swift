@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import HuaXingKit
 import HuaXingUI
@@ -517,15 +518,26 @@ struct DiagnosticView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
+                HStack(spacing: 8) {
                     Text("工具链诊断")
                         .font(.title2.weight(.semibold))
                     Spacer()
+                    if appModel.isRefreshingToolchain {
+                        ProgressView("正在重新检测…")
+                            .controlSize(.small)
+                    }
                     Button {
                         Task { await appModel.refreshToolchain() }
                     } label: {
                         Label("重新探测", systemImage: "arrow.clockwise")
                     }
+                    .disabled(appModel.isRefreshingToolchain)
+                }
+
+                if let checkedAt = appModel.lastToolchainCheck {
+                    Text("上次检测：\(checkedAt.formatted(date: .omitted, time: .standard))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if appModel.diagnostics.isEmpty {

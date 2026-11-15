@@ -67,7 +67,7 @@ public enum Doctor {
                     severity: tool.isRequired ? .error : .warning,
                     tool: tool,
                     message: tool.isRequired
-                        ? "Not found on PATH"
+                        ? "Not found (PATH and standard Homebrew/system directories checked)"
                         : "Optional tool not installed — only affects some formats",
                     installCommand: installCommand(for: tool)
                 )

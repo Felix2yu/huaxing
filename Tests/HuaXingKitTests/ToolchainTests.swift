@@ -26,4 +26,37 @@ struct ToolchainTests {
             #expect(path != nil, "ToolLocator should find \(tool.rawValue) on this machine")
         }
     }
+
+    /// Regression: GUI apps launched by LaunchServices get a minimal PATH that
+    /// omits Homebrew. The hardcoded fallback directories must still resolve.
+    @Test("ToolLocator works with a GUI-minimal PATH")
+    func resolvesWithMinimalPATH() {
+        let minimal = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+        // sips always exists on macOS and lives in a hardcoded candidate dir.
+        let sips = ToolLocator.resolve(.sips, pathEnvironment: minimal)
+        #expect(sips == "/usr/bin/sips")
+
+        // An empty PATH must not disable the fallback either.
+        #expect(ToolLocator.resolve(.sips, pathEnvironment: "") == "/usr/bin/sips")
+    }
+
+    @Test("ToolLocator finds Homebrew ffmpeg when PATH omits /opt/homebrew/bin")
+    func resolvesHomebrewWithoutPATH() {
+        guard FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/ffmpeg") else {
+            return // Homebrew not installed on this machine
+        }
+        let found = ToolLocator.resolve(.ffmpeg, pathEnvironment: "/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(found == "/opt/homebrew/bin/ffmpeg")
+    }
+
+    @Test("userOverride wins over directory lookup")
+    func overrideTakesPrecedence() {
+        let found = ToolLocator.resolve(
+            .sips,
+            userOverride: "/usr/bin/sips",
+            pathEnvironment: ""
+        )
+        #expect(found == "/usr/bin/sips")
+    }
 }

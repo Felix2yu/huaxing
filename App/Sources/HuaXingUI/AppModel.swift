@@ -18,6 +18,10 @@ public final class AppModel: ObservableObject {
     @Published public var rules: [Rule] = []
     @Published public var diagnostics: [Diagnostic] = []
     @Published public var toolchainSnapshot: ToolchainSnapshot?
+    /// 探测进行中标记，供状态条 / 诊断页给出可见反馈并防止重复触发。
+    @Published public private(set) var isRefreshingToolchain = false
+    /// 最近一次探测完成时间 —— 让「重新探测」在结果不变时也有可见反馈。
+    @Published public private(set) var lastToolchainCheck: Date?
 
     // MARK: - Stores
 
@@ -53,11 +57,20 @@ public final class AppModel: ObservableObject {
     }
 
     /// 重新探测工具链（用户手动触发或收到外部通知时）。
+    ///
+    /// 每次都新建 Toolchain，不复用缓存快照，因此安装/修复工具后点「重新探测」
+    /// 能立刻反映最新状态。`isRefreshingToolchain` 让 UI 有可见的进行中反馈，
+    /// 同时避免并发探测互相覆盖 diagnostics。
     public func refreshToolchain() async {
+        guard !isRefreshingToolchain else { return }
+        isRefreshingToolchain = true
+        defer { isRefreshingToolchain = false }
+
         let tc = Toolchain()
         let snap = await tc.snapshot()
         toolchainSnapshot = snap
         diagnostics = Doctor.diagnose(snapshot: snap)
+        lastToolchainCheck = Date()
     }
 
     // MARK: - Preset CRUD
