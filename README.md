@@ -1,10 +1,10 @@
-# 化形 HuaXing
+# 化形
 
 macOS 多媒体转换工具包：用**预设**把视频 / 音频 / 图片转成目标格式，用**规则引擎**按条件批量匹配并自动执行，并提供一套**工具链自检**。
 
 - **HuaXingKit** —— 纯 Swift 引擎（管线、规则、命名、工具链、持久化）
 - **huaxingctl** —— 命令行前端
-- **HuaXing（化形）** —— SwiftUI 图形界面（macOS App）
+- **化形** —— SwiftUI 图形界面（macOS App）
 
 > 目标平台：macOS 26（Tahoe），Swift 6.4。视频/音频转换需要 `ffmpeg` + `ffprobe`；图片转换可走系统 ImageIO / `sips`，仅在使用 JPEG XL / WebP 等格式时才依赖可选工具。
 
@@ -39,7 +39,7 @@ macOS 多媒体转换工具包：用**预设**把视频 / 音频 / 图片转成�
 ```bash
 make build            # 构建 HuaXingKit + huaxingctl
 make test             # 运行单元测试（41 个用例）
-make app              # 构建根包 + App 子包，组装并 ad-hoc 签名 HuaXing.app
+make app              # 构建根包 + App 子包，组装并 ad-hoc 签名 化形.app
 make doctor           # 自检工具链
 ```
 
@@ -53,12 +53,12 @@ swift test -c release           # 发布构建下跑测试
 
 > `Makefile` 的 `SANDBOX` 与 `App/build-app.sh` 都加了 `--disable-sandbox`（SwiftPM manifest 层）与 `-Xswiftc -disable-sandbox`（编译器层），受限环境 / CI 下 `make build/test/app/doctor` 才能全部跑通。
 
-`make app` 产物位于 `.build/release/HuaXing.app`，CLI 随包打包在 `Contents/MacOS/huaxingctl`：
+`make app` 产物位于 `.build/release/化形.app`，CLI 随包打包在 `Contents/MacOS/huaxingctl`：
 
 ```bash
-open .build/release/HuaXing.app
+open .build/release/化形.app
 # 或系统安装
-sudo cp -r .build/release/HuaXing.app /Applications/
+sudo cp -r .build/release/化形.app /Applications/
 ```
 
 ---
@@ -99,7 +99,7 @@ huaxingctl version                                 # 版本号
 
 ## 图形界面
 
-`make app` 后打开 `HuaXing.app`，左侧分栏五个标签页：
+`make app` 后打开 `化形.app`，左侧分栏五个标签页：
 
 - **转换**：拖拽文件 / 文件夹，选预设与输出目录，开始转换
 - **作业**：任务表格（名称 / 状态 / 进度 / 输入 / 输出 / 耗时 / 预设 / 规则 / 错误），右键取消 / 清空

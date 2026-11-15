@@ -26,7 +26,7 @@ func dispatch(_ raw: [String]) async -> Int32 {
 
 func printGlobalUsage() {
     let usage = """
-    huaxingctl — 化形 HuaXing CLI
+    huaxingctl — 化形 CLI
     Usage: huaxingctl <command> [flags]
 
     Commands:

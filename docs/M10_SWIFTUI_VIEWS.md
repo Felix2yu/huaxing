@@ -391,7 +391,7 @@ struct HuaXingApp: App {
     }
     
     var body: some Scene {
-        WindowGroup("化形 HuaXing") {
+        WindowGroup("化形") {
             HuaXingRoot()
                 .environmentObject(appModel)
                 .environmentObject(queueManager)
@@ -417,7 +417,7 @@ struct HuaXingApp: App {
 | 3 | Preset + Rule | `Views/PresetEditorView.swift`、`Views/RuleEditorView.swift`（v1 单层） | 添加/编辑/保存 preset → JSON 落盘 → CLI `presets list` 读到 |
 | 4 | Diagnostics + 收尾 | `Views/DiagnosticView.swift`、`HuaXingMain.swift` 加 Settings | toolchain 状态条实时刷新；doctor 按钮触发探测 |
 
-每个阶段结束时 `make app` → `open .build/release/HuaXing.app` 目视验证。
+每个阶段结束时 `make app` → `open .build/release/化形.app` 目视验证。
 
 ---
 
@@ -426,7 +426,7 @@ struct HuaXingApp: App {
 **编译层（必过）**：
 - [ ] `make check-ui` 无错误
 - [ ] `swift build -c release -Xswiftc -disable-sandbox` App 子包 0 error（允许 warning）
-- [ ] `make app` → HuaXing.app bundle 组装 + codesign 全过
+- [ ] `make app` → 化形.app bundle 组装 + codesign 全过
 
 **功能层（目视）**：
 - [ ] 侧栏 5 tab 可切换，每个 tab 有内容（非空白）

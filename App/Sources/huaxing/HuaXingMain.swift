@@ -12,13 +12,13 @@ struct HuaXingApp: App {
         _appModel = StateObject(wrappedValue: model)
         _queueManager = StateObject(wrappedValue: QueueManager(
             appModel: model,
-            pathProvider: { await model.toolchainSnapshot }
+            pathProvider: { model.toolchainSnapshot }
         ))
         _uiState = StateObject(wrappedValue: UIRuntimeState())
     }
 
     var body: some Scene {
-        WindowGroup("化形 HuaXing") {
+        WindowGroup("化形") {
             HuaXingRoot()
                 .environmentObject(appModel)
                 .environmentObject(queueManager)

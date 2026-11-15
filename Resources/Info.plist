@@ -12,6 +12,10 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>化形</string>
+	<key>CFBundleDisplayName</key>
+	<string>化形</string>
+	<key>CFBundleIconFile</key>
+	<string>化形.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
