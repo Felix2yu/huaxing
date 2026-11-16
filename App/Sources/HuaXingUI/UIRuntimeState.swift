@@ -10,7 +10,8 @@ import HuaXingKit
 /// / `#Preview` 全部不可用（都是 SwiftUI 5 引入的 external macro）。
 /// 统一走 `ObservableObject + @Published`（Combine property wrapper，无宏依赖）。
 /// 每个视图从 `@EnvironmentObject var uiState: UIRuntimeState` 读写。
-@MainActor
+///
+/// App target 启用默认 MainActor 隔离，省略显式标注。
 public final class UIRuntimeState: ObservableObject {
 
     // MARK: - Root tab

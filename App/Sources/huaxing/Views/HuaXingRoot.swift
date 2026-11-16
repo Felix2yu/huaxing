@@ -84,7 +84,7 @@ struct SettingsView: View {
         Form {
             Section("关于") {
                 LabeledContent("Bundle ID", value: "im.yufei.huaxing")
-                LabeledContent("最低系统版本", value: "macOS 26.0")
+                LabeledContent("最低系统版本", value: "macOS 27.0")
             }
             Section("命令行") {
                 Text("CLI 随 .app 打包，位于 Contents/MacOS/huaxingctl")

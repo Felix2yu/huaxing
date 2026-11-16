@@ -355,7 +355,7 @@ func runConvert(_ args: [String]) async -> Int32 {
     while cursor < planned.count {
         let end = min(cursor + maxConcurrent, planned.count)
         let batch = Array(planned[cursor..<end])
-        let batchOutcomes = await withTaskGroup(of: (Int, ConvertOutcome).self) { group in
+        let batchOutcomes = await withTaskGroup { group in
             for (offset, item) in batch.enumerated() {
                 group.addTask {
                     (offset, await convertOne(item))

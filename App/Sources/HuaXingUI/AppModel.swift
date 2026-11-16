@@ -9,7 +9,8 @@ import HuaXingKit
 ///
 /// 全部 @Published 属性都是 Sendable 的值类型（Preset / Rule / Diagnostic /
 /// ToolchainSnapshot），可以在 Swift 6 严格并发下安全跨 actor 边界传递。
-@MainActor
+///
+/// App target 启用 Swift 6.2 默认 MainActor 隔离，这里不再重复标注 `@MainActor`。
 public final class AppModel: ObservableObject {
 
     // MARK: - Published state

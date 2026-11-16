@@ -145,6 +145,7 @@ public enum ProcessRunner {
     ///
     /// Implemented on top of Subprocess 1.0: `run(...)` collects stdout/stderr
     /// and returns a non-zero exit code as a normal result (not a thrown error).
+    @concurrent
     public static func run(_ spec: ProcessSpec) async -> ProcessResult {
         do {
             let result = try await Subprocess.run(
@@ -181,10 +182,10 @@ public enum ProcessRunner {
         let (stream, continuation) = AsyncStream.makeStream(of: OutputLine.self)
         let handle = ProcessHandle()
 
-        let task = Task { @Sendable in
+        let task = Task(name: "ProcessRunner.lines") { @Sendable in
             var code: Int32 = -1
             do {
-                code = try await withThrowingTaskGroup(of: Int32.self) { group in
+                code = try await withThrowingTaskGroup { group in
                     group.addTask {
                         let result = try await Subprocess.run(
                             .path(FilePath(spec.executable)),
@@ -219,9 +220,10 @@ public enum ProcessRunner {
             // Cleanup runs on the normal and cancelled paths alike: when
             // `handle.cancel()` cancels the enclosing task, `Subprocess.run`
             // throws `CancellationError`, we land in `catch`, and the tail below
-            // still records the exit code and terminates the stream. The
-            // synchronous tail needs no `withTaskCancellationShield` (which
-            // requires the macOS 27 deployment target this project doesn't set).
+            // still records the exit code and terminates the stream. The tail is
+            // synchronous, so it needs no `withTaskCancellationShield`; the
+            // deployment target is now macOS 27, so that API is available if the
+            // cleanup ever becomes async.
             handle.recordExit(code)
             continuation.finish()
         }

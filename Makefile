@@ -21,16 +21,18 @@ perf:
 
 check-model:
 	@echo "typecheck HuaXingUI (all model files)..."
-	swiftc -typecheck -swift-version 6 -target arm64-apple-macos26.0 \
-		-I .build/out/Products/Debug $(OBSPLUGIN) \
+	swiftc -typecheck -swift-version 6 -default-isolation MainActor -target arm64-apple-macos27.0 \
+		-I .build/out/Products/Debug \
+		-I .build/checkouts/swift-subprocess/Sources/_SubprocessCShims/include \
+		$(OBSPLUGIN) \
 		App/Sources/HuaXingUI/*.swift 2>&1
 
 check-ui:
 	@# 三步探针：先 arm64，再 arm64e
-	swiftc -typecheck -swift-version 6 -target arm64-apple-macos26.0 \
+	swiftc -typecheck -swift-version 6 -target arm64-apple-macos27.0 \
 		-load-plugin-library /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/libObservationMacros.dylib \
 		App/Probe.swift 2>&1 || \
-	swiftc -typecheck -swift-version 6 -target arm64e-apple-macos26.0 \
+	swiftc -typecheck -swift-version 6 -target arm64e-apple-macos27.0 \
 		-load-plugin-library /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/libObservationMacros.dylib \
 		App/Probe.swift
 

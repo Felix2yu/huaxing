@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "HuaXingApp",
     platforms: [
-        .macOS(.v26)
+        .macOS(.v27)
     ],
     dependencies: [
         .package(path: "..")
@@ -16,13 +16,20 @@ let package = Package(
             dependencies: [
                 .product(name: "HuaXingKit", package: "huaxing")
             ],
-            path: "Sources/HuaXingUI"
+            path: "Sources/HuaXingUI",
+            swiftSettings: [
+                // Swift 6.2 默认 MainActor 隔离：UI 模型层与视图同在主线程，减少标注。
+                .defaultIsolation(MainActor.self)
+            ]
         ),
         // SwiftUI 可执行入口 —— 需要完整 Xcode
         .executableTarget(
             name: "huaxing",
             dependencies: ["HuaXingUI"],
-            path: "Sources/huaxing"
+            path: "Sources/huaxing",
+            swiftSettings: [
+                .defaultIsolation(MainActor.self)
+            ]
         )
     ]
 )

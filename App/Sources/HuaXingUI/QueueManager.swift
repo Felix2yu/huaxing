@@ -8,9 +8,8 @@ import HuaXingKit
 /// 控制并发数，驱动 VideoPipeline / AudioPipeline / ImagePipeline。
 ///
 /// 所有状态通过 @Published 暴露，SwiftUI 视图直接订阅 `jobs` 数组。
-/// 内部逻辑全部运行在 @MainActor 上（ObservableObject 约定），
+/// 内部逻辑由 App target 的默认 MainActor 隔离保证，
 /// 管线调用通过 async/await 挂起 MainActor 线程（不阻塞）。
-@MainActor
 public final class QueueManager: ObservableObject {
 
     // MARK: - Published state
@@ -19,7 +18,7 @@ public final class QueueManager: ObservableObject {
     @Published public var maxConcurrent: Int = 2 {
         didSet {
             if maxConcurrent < 1 { maxConcurrent = 1 }
-            Task { @MainActor in await self.schedule() }
+            Task { await self.schedule() }
         }
     }
     @Published public private(set) var isRunning: Bool = false
@@ -176,7 +175,7 @@ public final class QueueManager: ObservableObject {
     /// 这里把每个 job 的 objectWillChange 转发给 QueueManager，确保状态/进度刷新。
     private func observe(_ job: JobModel) {
         let cancellable = job.objectWillChange.sink { [weak self] _ in
-            Task { @MainActor in self?.objectWillChange.send() }
+            Task { self?.objectWillChange.send() }
         }
         jobObservers[job.id] = cancellable
     }
@@ -220,7 +219,7 @@ public final class QueueManager: ObservableObject {
         defer {
             runningIDs.remove(job.id)
             // 收尾后尝试拉起下一个 pending
-            Task { @MainActor [weak self] in
+            Task { [weak self] in
                 await self?.schedule()
             }
         }

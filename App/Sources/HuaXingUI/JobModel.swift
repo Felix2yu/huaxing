@@ -10,7 +10,8 @@ import HuaXingKit
 ///
 /// 进度通过 `updateProgress(_:)` 从管线的 progress 回调喂入，结果在
 /// 管线成功返回时通过 `markFinished(result:)` / `markImageFinished(result:)` 记录。
-@MainActor
+///
+/// App target 启用默认 MainActor 隔离，省略显式标注。
 public final class JobModel: ObservableObject, Identifiable {
 
     public let id: UUID
